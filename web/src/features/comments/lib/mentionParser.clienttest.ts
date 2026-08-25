@@ -5,7 +5,7 @@ import {
   MENTION_USER_PREFIX,
   sanitizeMentions,
   type ProjectMember,
-} from "./mentionParser";
+} from "./__pr1check_mentionParser";
 
 describe("mentionParser", () => {
   describe("MENTION_USER_PREFIX", () => {
@@ -134,11 +134,20 @@ describe("mentionParser", () => {
         expect(result).toEqual([]);
       });
 
-      it("should not match mentions with nested brackets", () => {
+      it("should match mentions whose display name contains brackets", () => {
+        // Display names from SSO providers may contain brackets; the userId is
+        // the authoritative part of a mention, so these must be parsed.
+        const content = "@[John Doe[ Platform Team ]](user:alice123)";
+        const result = extractUniqueMentionedUserIds(content);
+
+        expect(result).toEqual(["alice123"]);
+      });
+
+      it("should match mentions with nested brackets around the name", () => {
         const content = "@[Alice [Admin]](user:alice123)";
         const result = extractUniqueMentionedUserIds(content);
 
-        expect(result).toEqual([]);
+        expect(result).toEqual(["alice123"]);
       });
 
       it("should not match mentions with user ID containing invalid characters", () => {
@@ -244,6 +253,29 @@ describe("mentionParser", () => {
 
         expect(result).toEqual(["alice123", "bob456"]);
       });
+
+      it("should not merge a malformed mention with a later valid one", () => {
+        // The malformed userId cannot complete, and the display-name capture
+        // must not expand through the following mention token
+        const content = "@[A](user:bad!id) keep me @[Bob](user:bob456)";
+        const result = extractUniqueMentionedUserIds(content);
+
+        expect(result).toEqual(["bob456"]);
+      });
+
+      it("should resolve display names ending with brackets", () => {
+        const content = "@[Team [X]](user:bob456)";
+        const result = extractUniqueMentionedUserIds(content);
+
+        expect(result).toEqual(["bob456"]);
+      });
+
+      it("should match two adjacent mentions independently", () => {
+        const content = "@[Alice](user:alice123)@[Bob](user:bob456)";
+        const result = extractUniqueMentionedUserIds(content);
+
+        expect(result).toEqual(["alice123", "bob456"]);
+      });
     });
 
     describe("ReDoS prevention", () => {
@@ -267,8 +299,9 @@ describe("mentionParser", () => {
         const result = extractUniqueMentionedUserIds(content);
         const duration = Date.now() - startTime;
 
+        // The userId is authoritative, so this resolves to the mention's user
         expect(duration).toBeLessThan(100);
-        expect(result).toEqual([]);
+        expect(result).toEqual(["alice123"]);
       });
 
       it("should handle pathological regex patterns efficiently", () => {
@@ -344,6 +377,22 @@ describe("mentionParser", () => {
 
         expect(result.sanitizedContent).toBe("@[User](user:minimal111) review");
       });
+
+      it("should normalize valid mentions whose display name contains brackets", () => {
+        const bracketMember: ProjectMember = {
+          id: "bracket789",
+          name: "Jane Doe[ Platform Team ]",
+          email: "jane@example.com",
+        };
+        const content =
+          "Thanks @[Jane Doe[ Platform Team ]](user:bracket789) for the review";
+        const result = sanitizeMentions(content, [bracketMember]);
+
+        expect(result.sanitizedContent).toBe(
+          "Thanks @[Jane Doe[ Platform Team ]](user:bracket789) for the review",
+        );
+        expect(result.validMentionedUserIds).toEqual(["bracket789"]);
+      });
     });
 
     describe("invalid user handling", () => {
@@ -372,6 +421,19 @@ describe("mentionParser", () => {
 
         expect(result.sanitizedContent).toBe("User1 User2");
         expect(result.validMentionedUserIds).toEqual([]);
+      });
+
+      it("should preserve text between a malformed mention and a later valid one", () => {
+        // Regression test: the display-name capture must not span the
+        // "](user:" delimiter of another mention, which would replace the
+        // whole merged span and silently delete user-authored text
+        const content = "@[A](user:bad!id) keep me @[Bob](user:bob456)";
+        const result = sanitizeMentions(content, mockMembers);
+
+        expect(result.sanitizedContent).toBe(
+          "@[A](user:bad!id) keep me @[Bob Jones](user:bob456)",
+        );
+        expect(result.validMentionedUserIds).toEqual(["bob456"]);
       });
     });
 
