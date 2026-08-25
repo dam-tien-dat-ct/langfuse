@@ -1,23 +1,12 @@
-/* eslint-disable @repo/no-style-props */
-import Header from "@/src/components/layouts/header";
-import { ActionButtonCountBadge } from "@/src/components/ui/action-button-count-badge";
-import { Button, type ButtonProps } from "@/src/components/ui/button";
-import {
-  Drawer,
-  DrawerContent,
-  DrawerHeader,
-  DrawerTitle,
-  DrawerTrigger,
-} from "@/src/components/ui/drawer";
-import { CommentList } from "@/src/features/comments/CommentList";
+import { CommentDrawerContent } from "@/src/features/comments/CommentDrawerContent";
+import { CommentDrawerMenuButton } from "@/src/features/comments/CommentDrawerMenuButton";
+import { CommentDrawerToolbarButton } from "@/src/features/comments/CommentDrawerToolbarButton";
+import { type ButtonProps } from "@/src/components/ui/button";
+import { Drawer, DrawerTrigger } from "@/src/components/ui/drawer";
 import { useHasProjectAccess } from "@/src/features/rbac/utils/checkProjectAccess";
 import { type CommentObjectType } from "@langfuse/shared";
-// LFE-7628: general (trace/observation/session) comments use a square speech
-// bubble to stay visually distinct from per-score comments, which use the round
-// MessageCircle bubble in the annotation form.
-import { MessageSquare, MessageSquareOff } from "lucide-react";
-import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
+import { useEffect, useRef, useState } from "react";
 import { type SelectionData } from "./contexts/InlineCommentSelectionContext";
 
 export function CommentDrawerButton({
@@ -26,7 +15,6 @@ export function CommentDrawerButton({
   objectType,
   count,
   variant = "secondary",
-  className,
   size = "default",
   pendingSelection,
   onSelectionUsed,
@@ -40,7 +28,6 @@ export function CommentDrawerButton({
   objectType: CommentObjectType;
   count?: number;
   variant?: ButtonProps["variant"];
-  className?: string;
   size?: ButtonProps["size"];
   pendingSelection?: SelectionData | null;
   onSelectionUsed?: () => void;
@@ -61,7 +48,6 @@ export function CommentDrawerButton({
 
   const isDrawerOpen = controlledIsOpen ?? internalIsDrawerOpen;
   const setIsDrawerOpen = controlledOnOpenChange ?? setInternalIsDrawerOpen;
-  const hasFocusedRef = useRef(false); // Track if we've already focused the drawer
 
   const hasReadAccess = useHasProjectAccess({
     projectId,
@@ -116,29 +102,22 @@ export function CommentDrawerButton({
     setIsDrawerOpen,
   ]);
 
-  if (!hasReadAccess || (!hasWriteAccess && !count))
-    return (
-      <Button
-        type="button"
-        variant={isMenu ? "ghost" : "secondary"}
-        size={isMenu ? "sm" : size}
-        className={
-          isMenu ? "w-full justify-start gap-2 font-normal" : className
-        }
+  const isDisabled = !hasReadAccess || (!hasWriteAccess && !count);
+  const toolbarVariant = variant ?? "secondary";
+  const toolbarSize = size ?? "default";
+
+  if (isDisabled) {
+    return isMenu ? (
+      <CommentDrawerMenuButton count={count} disabled />
+    ) : (
+      <CommentDrawerToolbarButton
+        count={count}
+        variant={toolbarVariant}
+        size={toolbarSize}
         disabled
-      >
-        <MessageSquareOff
-          className={
-            isMenu
-              ? "text-muted-foreground h-4 w-4"
-              : size === "sm"
-                ? "text-muted-foreground h-3.5 w-3.5"
-                : "text-muted-foreground h-4 w-4"
-          }
-        />
-        {isMenu ? <span className="text-sm">Add comment</span> : null}
-      </Button>
+      />
     );
+  }
 
   return (
     <Drawer
@@ -150,11 +129,6 @@ export function CommentDrawerButton({
           return;
         }
         setIsDrawerOpen(open);
-
-        // Reset focus tracking when drawer closes
-        if (!open) {
-          hasFocusedRef.current = false;
-        }
 
         // Clear URL parameters and hash when drawer is closed
         if (!open && router.query.comments === "open") {
@@ -172,67 +146,27 @@ export function CommentDrawerButton({
       }}
     >
       <DrawerTrigger asChild>
-        <Button
-          type="button"
-          variant={isMenu ? "ghost" : variant}
-          size={isMenu ? "sm" : size}
-          className={
-            isMenu ? "w-full justify-start gap-2 font-normal" : className
-          }
-          id="comment-drawer-button"
-        >
-          <div
-            className={
-              isMenu ? "flex items-center gap-2" : "flex items-center gap-1"
-            }
-          >
-            <MessageSquare
-              className={
-                isMenu ? "h-4 w-4" : size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"
-              }
-            />
-            <span className={isMenu ? "text-sm" : undefined}>Add comment</span>
-            {!!count ? <ActionButtonCountBadge count={count} /> : null}
-          </div>
-        </Button>
+        {isMenu ? (
+          <CommentDrawerMenuButton count={count} disabled={false} />
+        ) : (
+          <CommentDrawerToolbarButton
+            count={count}
+            variant={toolbarVariant}
+            size={toolbarSize}
+            disabled={false}
+          />
+        )}
       </DrawerTrigger>
-      <DrawerContent
-        overlayClassName="bg-primary/10"
-        className="h-screen-with-banner max-h-screen-with-banner overflow-hidden"
-      >
-        <div
-          className="mx-auto flex h-full w-full flex-col overflow-hidden focus:ring-0 focus:outline-hidden focus-visible:ring-0 focus-visible:outline-hidden md:max-h-full"
-          tabIndex={-1}
-          ref={(el) => {
-            // Auto-focus drawer content when it opens (only once)
-            if (el && isDrawerOpen && !hasFocusedRef.current) {
-              hasFocusedRef.current = true;
-              setTimeout(() => el.focus({ preventScroll: true }), 100);
-            }
-          }}
-        >
-          <DrawerHeader className="bg-background sr-only shrink-0 rounded-sm">
-            <DrawerTitle>
-              <Header title="Comments"></Header>
-            </DrawerTitle>
-          </DrawerHeader>
-          <div
-            data-vaul-no-drag
-            className="min-h-0 flex-1 overflow-hidden px-2 py-2"
-          >
-            <CommentList
-              projectId={projectId}
-              objectId={objectId}
-              objectType={objectType}
-              onMentionDropdownChange={setIsMentionDropdownOpen}
-              isDrawerOpen={isDrawerOpen}
-              pendingSelection={pendingSelection}
-              onSelectionUsed={onSelectionUsed}
-              onCommentChange={onCommentChange}
-            />
-          </div>
-        </div>
-      </DrawerContent>
+      <CommentDrawerContent
+        projectId={projectId}
+        objectId={objectId}
+        objectType={objectType}
+        isDrawerOpen={isDrawerOpen}
+        pendingSelection={pendingSelection}
+        onSelectionUsed={onSelectionUsed}
+        onCommentChange={onCommentChange}
+        onMentionDropdownChange={setIsMentionDropdownOpen}
+      />
     </Drawer>
   );
 }
