@@ -21,8 +21,14 @@ vi.mock("@langfuse/shared/src/server", () => ({
       store.delete(key);
       return 1;
     }),
-    decr: vi.fn(async (key: string) => {
+    // Stands in for the DECREMENT_AND_FLOOR Lua script, which Redis runs as one
+    // atomic step. The mock therefore never interleaves a concurrent write.
+    eval: vi.fn(async (_script: string, _keyCount: number, key: string) => {
       const next = Number(store.get(key) ?? "0") - 1;
+      if (next < 0) {
+        store.set(key, "0");
+        return 0;
+      }
       store.set(key, String(next));
       return next;
     }),
@@ -74,6 +80,17 @@ describe("backpressureGuard", () => {
     await recordProcessedJob("project-1");
 
     expect(store.get("langfuse:queue-backpressure:depth:project-1")).toBe("0");
+  });
+
+  it("keeps the decrement and the floor in one redis round trip", async () => {
+    const { redis } = (await import(
+      "@langfuse/shared/src/server"
+    )) as unknown as { redis: { eval: { mock: { calls: unknown[][] } } } };
+    const before = redis.eval.mock.calls.length;
+
+    await recordProcessedJob("project-1");
+
+    expect(redis.eval.mock.calls.length).toBe(before + 1);
   });
 
   it("lists a paused project through scanStream", async () => {

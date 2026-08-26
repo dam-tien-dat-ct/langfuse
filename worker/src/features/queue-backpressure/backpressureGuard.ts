@@ -84,6 +84,18 @@ export async function listPausedProjects(): Promise<string[]> {
   }
 }
 
+// Decrement the depth key and floor it at 0 in one atomic step. A separate
+// DECR then SET would let a concurrent recordQueuedJob increment land between
+// the two commands, and the SET would then discard that enqueue.
+const DECREMENT_AND_FLOOR = `
+  local depth = redis.call('DECR', KEYS[1])
+  if depth < 0 then
+    redis.call('SET', KEYS[1], '0')
+    return 0
+  end
+  return depth
+`;
+
 /**
  * Record one finished job for a project. This is the counterpart of
  * `recordQueuedJob`, so the depth key tracks the live queue depth instead of a
@@ -94,10 +106,7 @@ export async function recordProcessedJob(projectId: string): Promise<void> {
   if (!redis) return;
 
   try {
-    const depth = await redis.decr(depthKey(projectId));
-    if (depth < 0) {
-      await redis.set(depthKey(projectId), "0");
-    }
+    await redis.eval(DECREMENT_AND_FLOOR, 1, depthKey(projectId));
   } catch (error) {
     logger.error("Failed to record processed job", { projectId, error });
   }
