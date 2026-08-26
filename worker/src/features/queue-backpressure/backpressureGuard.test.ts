@@ -15,11 +15,16 @@ vi.mock("@langfuse/shared/src/server", () => ({
       store.set(key, value);
       return "OK";
     }),
+    incr: vi.fn(async (key: string) => {
+      const next = Number(store.get(key) ?? "0") + 1;
+      store.set(key, String(next));
+      return next;
+    }),
     del: vi.fn(async (key: string) => {
       store.delete(key);
       return 1;
     }),
-    keys: vi.fn(async () => []),
+    scan: vi.fn(async () => ["0", [] as string[]]),
   },
   logger: { warn: vi.fn(), error: vi.fn() },
   recordGauge: vi.fn(),
