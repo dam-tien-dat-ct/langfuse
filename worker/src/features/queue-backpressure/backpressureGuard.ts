@@ -33,12 +33,24 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
     });
 
     if (depth > PAUSE_THRESHOLD) {
-      await redis.set(pauseKey(projectId), "1", "EX", PAUSE_WINDOW_SECONDS);
-      recordIncrement("langfuse.queue_backpressure.paused", 1);
-      logger.warn("Paused project for queue backpressure", {
-        projectId,
-        depth,
-      });
+      // NX so only the job that crosses the threshold writes the pause key. A
+      // later job above the threshold must not extend the window it is already
+      // serving, and must not re-emit the metric and the warning.
+      const applied = await redis.set(
+        pauseKey(projectId),
+        "1",
+        "EX",
+        PAUSE_WINDOW_SECONDS,
+        "NX",
+      );
+
+      if (applied === "OK") {
+        recordIncrement("langfuse.queue_backpressure.paused", 1);
+        logger.warn("Paused project for queue backpressure", {
+          projectId,
+          depth,
+        });
+      }
     }
   } catch (error) {
     logger.error("Failed to record queued job", { projectId, error });
