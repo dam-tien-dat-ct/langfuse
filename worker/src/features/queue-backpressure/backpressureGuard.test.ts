@@ -4,6 +4,7 @@ import {
   clearQueueDepth,
   isProjectPaused,
   recordQueuedJob,
+  releaseQueuedJob,
 } from "./backpressureGuard";
 
 const store = new Map<string, string>();
@@ -17,6 +18,11 @@ vi.mock("@langfuse/shared/src/server", () => ({
     }),
     incr: vi.fn(async (key: string) => {
       const next = Number(store.get(key) ?? "0") + 1;
+      store.set(key, String(next));
+      return next;
+    }),
+    decr: vi.fn(async (key: string) => {
+      const next = Number(store.get(key) ?? "0") - 1;
       store.set(key, String(next));
       return next;
     }),
@@ -44,6 +50,13 @@ describe("backpressureGuard", () => {
 
   it("reports a project that is not paused", async () => {
     await expect(isProjectPaused("project-1")).resolves.toBe(false);
+  });
+
+  it("releases a finished job from the depth counter", async () => {
+    await recordQueuedJob("project-1");
+    await releaseQueuedJob("project-1");
+
+    expect(store.get("langfuse:queue-backpressure:depth:project-1")).toBe("0");
   });
 
   it("clears the depth counter", async () => {

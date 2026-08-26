@@ -87,6 +87,24 @@ export async function listPausedProjects(): Promise<string[]> {
 }
 
 /**
+ * Release one finished job from the depth counter. Runs for every dequeued job,
+ * including one that threw and one that was skipped because its project is
+ * paused, so the counter tracks live depth instead of lifetime enqueues.
+ */
+export async function releaseQueuedJob(projectId: string): Promise<void> {
+  if (!redis) return;
+
+  try {
+    const depth = await redis.decr(depthKey(projectId));
+    if (depth < 0) {
+      await redis.set(depthKey(projectId), "0");
+    }
+  } catch (error) {
+    logger.error("Failed to release queued job", { projectId, error });
+  }
+}
+
+/**
  * Clear the depth counter after a queue drains.
  */
 export async function clearQueueDepth(projectId: string): Promise<void> {
