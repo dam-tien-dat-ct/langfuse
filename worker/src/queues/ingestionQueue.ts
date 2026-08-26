@@ -18,6 +18,11 @@ import { prisma } from "@langfuse/shared/src/db";
 
 import { env } from "../env";
 import { IngestionService } from "../services/IngestionService";
+import {
+  isProjectPaused,
+  recordQueuedJob,
+  releaseQueuedJob,
+} from "../features/queue-backpressure/backpressureGuard";
 import { ClickhouseWriter, TableName } from "../services/ClickhouseWriter";
 import { chunk } from "lodash";
 import { randomUUID } from "crypto";
@@ -30,7 +35,18 @@ export const ingestionQueueProcessorBuilder = (
     [];
 
   return async (job: Job<TQueueJobTypes[QueueName.IngestionQueue]>) => {
+    const projectId = job.data.payload.authCheck.scope.projectId;
+
     try {
+      await recordQueuedJob(projectId);
+
+      if (await isProjectPaused(projectId)) {
+        logger.debug(
+          `Skipping ingestion event for paused project ${projectId}`,
+        );
+        return;
+      }
+
       const span = getCurrentSpan();
       if (span) {
         span.setAttribute("messaging.bullmq.job.input.id", job.data.id);
@@ -236,6 +252,8 @@ export const ingestionQueueProcessorBuilder = (
       );
       traceException(e);
       throw e;
+    } finally {
+      await releaseQueuedJob(projectId);
     }
   };
 };
