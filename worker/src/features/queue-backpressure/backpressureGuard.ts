@@ -69,8 +69,38 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
-  return keys.map((key) => key.split(":").pop() as string);
+  try {
+    const keys: string[] = [];
+    const stream = redis.scanStream({
+      match: `${BACKPRESSURE_PREFIX}:paused:*`,
+    });
+    for await (const batch of stream) {
+      keys.push(...(batch as string[]));
+    }
+    return keys.map((key) => key.split(":").pop() as string);
+  } catch (error) {
+    logger.error("Failed to list paused projects", { error });
+    return [];
+  }
+}
+
+/**
+ * Record one finished job for a project. This is the counterpart of
+ * `recordQueuedJob`, so the depth key tracks the live queue depth instead of a
+ * lifetime enqueue count. The counter floors at 0, because a decrement can
+ * arrive after `clearQueueDepth` already removed the key.
+ */
+export async function recordProcessedJob(projectId: string): Promise<void> {
+  if (!redis) return;
+
+  try {
+    const depth = await redis.decr(depthKey(projectId));
+    if (depth < 0) {
+      await redis.set(depthKey(projectId), "0");
+    }
+  } catch (error) {
+    logger.error("Failed to record processed job", { projectId, error });
+  }
 }
 
 /**
@@ -79,5 +109,9 @@ export async function listPausedProjects(): Promise<string[]> {
 export async function clearQueueDepth(projectId: string): Promise<void> {
   if (!redis) return;
 
-  await redis.del(depthKey(projectId));
+  try {
+    await redis.del(depthKey(projectId));
+  } catch (error) {
+    logger.error("Failed to clear queue depth", { projectId, error });
+  }
 }
