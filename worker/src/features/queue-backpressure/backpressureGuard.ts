@@ -5,10 +5,14 @@ import { recordGauge, recordIncrement } from "@langfuse/shared/src/server";
 const BACKPRESSURE_PREFIX = "langfuse:queue-backpressure";
 
 // Threshold of queued jobs above which a project is paused for one window.
-const PAUSE_THRESHOLD = parseInt(process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "500");
+const PAUSE_THRESHOLD = parseInt(
+  process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "500",
+);
 
 // Window length in seconds a paused project stays paused.
-const PAUSE_WINDOW_SECONDS = Number(process.env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS ?? "300");
+const PAUSE_WINDOW_SECONDS = Number(
+  process.env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS ?? "300",
+);
 
 function pauseKey(projectId: string): string {
   return `${BACKPRESSURE_PREFIX}:paused:${projectId}`;
@@ -26,20 +30,18 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
   if (!redis) return;
 
   try {
-    const current = await redis.get(depthKey(projectId));
-    const depth = current ? Number(current) : 0;
-    await redis.set(depthKey(projectId), String(depth + 1));
+    const depth = await redis.incr(depthKey(projectId));
 
-    recordGauge("langfuse.queue_backpressure.depth", depth + 1, {
+    recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
     });
 
-    if (depth + 1 > PAUSE_THRESHOLD) {
+    if (depth > PAUSE_THRESHOLD) {
       await redis.set(pauseKey(projectId), "1", "EX", PAUSE_WINDOW_SECONDS);
       recordIncrement("langfuse.queue_backpressure.paused", 1);
       logger.warn("Paused project for queue backpressure", {
         projectId,
-        depth: depth + 1,
+        depth,
       });
     }
   } catch (error) {
