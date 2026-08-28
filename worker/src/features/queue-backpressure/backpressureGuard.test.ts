@@ -11,6 +11,11 @@ const store = new Map<string, string>();
 vi.mock("@langfuse/shared/src/server", () => ({
   redis: {
     get: vi.fn(async (key: string) => store.get(key) ?? null),
+    incr: vi.fn(async (key: string) => {
+      const next = Number(store.get(key) ?? "0") + 1;
+      store.set(key, String(next));
+      return next;
+    }),
     set: vi.fn(async (key: string, value: string) => {
       store.set(key, value);
       return "OK";

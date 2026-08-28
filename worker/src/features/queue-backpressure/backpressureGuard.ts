@@ -26,20 +26,18 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
   if (!redis) return;
 
   try {
-    const current = await redis.get(depthKey(projectId));
-    const depth = current ? Number(current) : 0;
-    await redis.set(depthKey(projectId), String(depth + 1));
+    const depth = await redis.incr(depthKey(projectId));
 
-    recordGauge("langfuse.queue_backpressure.depth", depth + 1, {
+    recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
     });
 
-    if (depth + 1 > PAUSE_THRESHOLD) {
+    if (depth > PAUSE_THRESHOLD) {
       await redis.set(pauseKey(projectId), "1", "EX", PAUSE_WINDOW_SECONDS);
       recordIncrement("langfuse.queue_backpressure.paused", 1);
       logger.warn("Paused project for queue backpressure", {
         projectId,
-        depth: depth + 1,
+        depth,
       });
     }
   } catch (error) {
