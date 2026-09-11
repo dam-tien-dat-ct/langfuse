@@ -46,6 +46,32 @@ describe("backpressureGuard", () => {
     await expect(isProjectPaused("project-1")).resolves.toBe(false);
   });
 
+  it("pauses a project once its depth crosses the threshold", async () => {
+    // Seed the depth to the threshold so the next increment crosses it.
+    store.set("langfuse:queue-backpressure:depth:project-1", "500");
+
+    await recordQueuedJob("project-1");
+
+    expect(store.get("langfuse:queue-backpressure:paused:project-1")).toBe("1");
+    await expect(isProjectPaused("project-1")).resolves.toBe(true);
+  });
+
+  it("does not pause a project below the threshold", async () => {
+    // Seed the depth just below the threshold.
+    store.set("langfuse:queue-backpressure:depth:project-1", "499");
+
+    await recordQueuedJob("project-1");
+
+    expect(store.has("langfuse:queue-backpressure:paused:project-1")).toBe(false);
+    await expect(isProjectPaused("project-1")).resolves.toBe(false);
+  });
+
+  it("reports a project that is paused", async () => {
+    store.set("langfuse:queue-backpressure:paused:project-1", "1");
+
+    await expect(isProjectPaused("project-1")).resolves.toBe(true);
+  });
+
   it("clears the depth counter", async () => {
     await recordQueuedJob("project-1");
     await clearQueueDepth("project-1");

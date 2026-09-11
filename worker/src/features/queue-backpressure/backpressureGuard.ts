@@ -67,7 +67,14 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
+  const stream = redis.scanStream({
+    match: `${BACKPRESSURE_PREFIX}:paused:*`,
+    count: 100,
+  });
+  const keys: string[] = [];
+  for await (const batch of stream) {
+    keys.push(...batch);
+  }
   return keys.map((key) => key.split(":").pop() as string);
 }
 
