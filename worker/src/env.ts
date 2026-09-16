@@ -240,6 +240,11 @@ const EnvSchema = z.object({
     .number()
     .positive()
     .default(120_000), // 2 minutes
+
+  // Queue backpressure: pause a project once its queued job depth crosses the
+  // threshold, for one window.
+  LANGFUSE_QUEUE_PAUSE_THRESHOLD: z.coerce.number().positive().default(500),
+  LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS: z.coerce.number().positive().default(300),
 });
 
 export const env: z.infer<typeof EnvSchema> =
