@@ -1,14 +1,12 @@
-import { redis } from "@langfuse/shared/src/server";
-import { logger } from "@langfuse/shared/src/server";
-import { recordGauge, recordIncrement } from "@langfuse/shared/src/server";
+import {
+  logger,
+  recordGauge,
+  recordIncrement,
+  redis,
+} from "@langfuse/shared/src/server";
+import { env } from "../../env";
 
 const BACKPRESSURE_PREFIX = "langfuse:queue-backpressure";
-
-// Threshold of queued jobs above which a project is paused for one window.
-const PAUSE_THRESHOLD = parseInt(process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "500");
-
-// Window length in seconds a paused project stays paused.
-const PAUSE_WINDOW_SECONDS = Number(process.env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS ?? "300");
 
 function pauseKey(projectId: string): string {
   return `${BACKPRESSURE_PREFIX}:paused:${projectId}`;
@@ -28,12 +26,24 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
   try {
     const depth = await redis.incr(depthKey(projectId));
 
+    // Sliding window: the depth key expires so a project resumes once its
+    // inflow stops instead of staying paused forever.
+    await redis.expire(
+      depthKey(projectId),
+      env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS,
+    );
+
     recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
     });
 
-    if (depth > PAUSE_THRESHOLD) {
-      await redis.set(pauseKey(projectId), "1", "EX", PAUSE_WINDOW_SECONDS);
+    if (depth > env.LANGFUSE_QUEUE_PAUSE_THRESHOLD) {
+      await redis.set(
+        pauseKey(projectId),
+        "1",
+        "EX",
+        env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS,
+      );
       recordIncrement("langfuse.queue_backpressure.paused", 1);
       logger.warn("Paused project for queue backpressure", {
         projectId,
@@ -67,8 +77,24 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
-  return keys.map((key) => key.split(":").pop() as string);
+  try {
+    // Incremental SCAN instead of KEYS: KEYS blocks the Redis event loop over
+    // the whole keyspace, which stalls ingestion and queue traffic.
+    const stream = redis.scanStream({
+      match: `${BACKPRESSURE_PREFIX}:paused:*`,
+      count: 100,
+    });
+
+    const keys: string[] = [];
+    for await (const batch of stream) {
+      keys.push(...batch);
+    }
+
+    return keys.map((key) => key.split(":").pop() as string);
+  } catch (error) {
+    logger.error("Failed to list paused projects", { error });
+    return [];
+  }
 }
 
 /**

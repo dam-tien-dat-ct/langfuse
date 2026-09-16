@@ -1,6 +1,10 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDotEnv": [".env"],
+  "globalEnv": [
+    "LANGFUSE_QUEUE_PAUSE_THRESHOLD",
+    "LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS"
+  ],
   "pipeline": {
     "build": {
       "dependsOn": ["db:generate", "^build"],

@@ -24,16 +24,36 @@ vi.mock("@langfuse/shared/src/server", () => ({
       store.delete(key);
       return 1;
     }),
+    expire: vi.fn(async () => 1),
     keys: vi.fn(async () => []),
+    scanStream: vi.fn(() => {
+      async function* generator() {
+        yield [];
+      }
+      return generator();
+    }),
   },
   logger: { warn: vi.fn(), error: vi.fn() },
   recordGauge: vi.fn(),
   recordIncrement: vi.fn(),
 }));
 
+vi.mock("../../env", () => ({
+  env: {
+    LANGFUSE_QUEUE_PAUSE_THRESHOLD: 2,
+    LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS: 300,
+  },
+}));
+
+const { redis, logger } = await import("@langfuse/shared/src/server");
+
 describe("backpressureGuard", () => {
   beforeEach(() => {
     store.clear();
+    vi.mocked(redis.get).mockClear();
+    vi.mocked(redis.set).mockClear();
+    vi.mocked(redis.incr).mockClear();
+    vi.mocked(redis.expire).mockClear();
   });
 
   it("counts one queued job", async () => {
@@ -44,6 +64,29 @@ describe("backpressureGuard", () => {
 
   it("reports a project that is not paused", async () => {
     await expect(isProjectPaused("project-1")).resolves.toBe(false);
+  });
+
+  it("pauses a project once its depth crosses the threshold", async () => {
+    await recordQueuedJob("project-1");
+    await recordQueuedJob("project-1");
+    await recordQueuedJob("project-1");
+
+    expect(store.get("langfuse:queue-backpressure:paused:project-1")).toBe("1");
+    await expect(isProjectPaused("project-1")).resolves.toBe(true);
+  });
+
+  it("does not throw when redis fails while recording a queued job", async () => {
+    vi.mocked(redis.incr).mockRejectedValueOnce(new Error("redis down"));
+
+    await expect(recordQueuedJob("project-1")).resolves.toBeUndefined();
+    expect(logger.error).toHaveBeenCalled();
+  });
+
+  it("fails open when redis fails while reading the pause flag", async () => {
+    vi.mocked(redis.get).mockRejectedValueOnce(new Error("redis down"));
+
+    await expect(isProjectPaused("project-1")).resolves.toBe(false);
+    expect(logger.error).toHaveBeenCalled();
   });
 
   it("clears the depth counter", async () => {
