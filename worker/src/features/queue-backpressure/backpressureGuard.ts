@@ -5,7 +5,9 @@ import { recordGauge, recordIncrement } from "@langfuse/shared/src/server";
 const BACKPRESSURE_PREFIX = "langfuse:queue-backpressure";
 
 // Threshold of queued jobs above which a project is paused for one window.
-const PAUSE_THRESHOLD = parseInt(process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "500");
+const rawThreshold = process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "500";
+const parsedThreshold = rawThreshold.trim() === "" ? NaN : Number(rawThreshold);
+const PAUSE_THRESHOLD = Number.isNaN(parsedThreshold) ? 500 : parsedThreshold;
 
 // Window length in seconds a paused project stays paused.
 const PAUSE_WINDOW_SECONDS = Number(process.env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS ?? "300");
