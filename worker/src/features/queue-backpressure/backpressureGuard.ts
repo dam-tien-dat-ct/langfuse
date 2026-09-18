@@ -28,7 +28,12 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
   if (!redis) return;
 
   try {
-    const depth = await redis.incr(depthKey(projectId));
+    const key = depthKey(projectId);
+    const depth = await redis.incr(key);
+    // Prevent abandoned counters from carrying into a later burst. A live
+    // queue refreshes this lease as jobs are added, while an idle queue lets it
+    // expire without requiring every completion path to call clearQueueDepth.
+    await redis.expire(key, PAUSE_WINDOW_SECONDS);
 
     recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
@@ -69,7 +74,15 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
+  const keys: string[] = [];
+  const stream = redis.scanStream({
+    match: `${BACKPRESSURE_PREFIX}:paused:*`,
+    count: 100,
+  });
+  for await (const batch of stream) {
+    keys.push(...(batch as string[]));
+  }
+
   return keys.map((key) => key.split(":").pop() as string);
 }
 
