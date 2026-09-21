@@ -30,6 +30,10 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
   try {
     const depth = await redis.incr(depthKey(projectId));
 
+    // Sliding expiration so an inactive depth counter resets instead of
+    // keeping the project permanently above the pause threshold.
+    await redis.expire(depthKey(projectId), PAUSE_WINDOW_SECONDS);
+
     recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
     });
@@ -69,7 +73,16 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
+  const stream = redis.scanStream({
+    match: `${BACKPRESSURE_PREFIX}:paused:*`,
+    count: 100,
+  });
+
+  const keys: string[] = [];
+  for await (const batch of stream) {
+    keys.push(...(batch as string[]));
+  }
+
   return keys.map((key) => key.split(":").pop() as string);
 }
 

@@ -24,7 +24,12 @@ vi.mock("@langfuse/shared/src/server", () => ({
       store.delete(key);
       return 1;
     }),
-    keys: vi.fn(async () => []),
+    expire: vi.fn(async () => 1),
+    scanStream: vi.fn(() => {
+      return (async function* () {
+        yield [] as string[];
+      })();
+    }),
   },
   logger: { warn: vi.fn(), error: vi.fn() },
   recordGauge: vi.fn(),
