@@ -9,6 +9,12 @@ const rawThreshold = process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "500";
 const parsedThreshold = rawThreshold.trim() === "" ? NaN : Number(rawThreshold);
 const PAUSE_THRESHOLD = Number.isNaN(parsedThreshold) ? 500 : parsedThreshold;
 
+if (Number.isNaN(parsedThreshold)) {
+  logger.warn(
+    `Invalid LANGFUSE_QUEUE_PAUSE_THRESHOLD "${rawThreshold}", falling back to default 500`,
+  );
+}
+
 // Window length in seconds a paused project stays paused.
 const PAUSE_WINDOW_SECONDS = Number(process.env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS ?? "300");
 
@@ -29,6 +35,10 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
 
   try {
     const depth = await redis.incr(depthKey(projectId));
+
+    // Sliding window: the counter expires when no new jobs are recorded for
+    // PAUSE_WINDOW_SECONDS, so paused projects recover once their queue drains.
+    await redis.expire(depthKey(projectId), PAUSE_WINDOW_SECONDS);
 
     recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
@@ -69,7 +79,18 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
+  // Incremental SCAN instead of KEYS: KEYS blocks the Redis event loop while
+  // scanning the entire keyspace.
+  const stream = redis.scanStream({
+    match: `${BACKPRESSURE_PREFIX}:paused:*`,
+    count: 100,
+  });
+
+  const keys: string[] = [];
+  for await (const batch of stream) {
+    keys.push(...batch);
+  }
+
   return keys.map((key) => key.split(":").pop() as string);
 }
 

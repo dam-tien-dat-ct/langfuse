@@ -20,11 +20,16 @@ vi.mock("@langfuse/shared/src/server", () => ({
       store.set(key, value);
       return "OK";
     }),
+    expire: vi.fn(async () => 1),
     del: vi.fn(async (key: string) => {
       store.delete(key);
       return 1;
     }),
-    keys: vi.fn(async () => []),
+    scanStream: vi.fn(() =>
+      (async function* () {
+        // no paused keys by default
+      })(),
+    ),
   },
   logger: { warn: vi.fn(), error: vi.fn() },
   recordGauge: vi.fn(),
