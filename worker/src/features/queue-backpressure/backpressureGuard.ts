@@ -10,6 +10,12 @@ const PAUSE_THRESHOLD = parseInt(process.env.LANGFUSE_QUEUE_PAUSE_THRESHOLD ?? "
 // Window length in seconds a paused project stays paused.
 const PAUSE_WINDOW_SECONDS = Number(process.env.LANGFUSE_QUEUE_PAUSE_WINDOW_SECONDS ?? "300");
 
+// Window length in seconds after which an idle depth counter resets itself, so
+// a drained queue cannot keep the pause flag permanently re-armed.
+const DEPTH_WINDOW_SECONDS = Number(
+  process.env.LANGFUSE_QUEUE_DEPTH_WINDOW_SECONDS ?? "300"
+);
+
 function pauseKey(projectId: string): string {
   return `${BACKPRESSURE_PREFIX}:paused:${projectId}`;
 }
@@ -27,6 +33,10 @@ export async function recordQueuedJob(projectId: string): Promise<void> {
 
   try {
     const depth = await redis.incr(depthKey(projectId));
+
+    // Sliding TTL: the depth counter expires once the project stops enqueueing,
+    // so the pause flag is not re-armed forever after the queue drains.
+    await redis.expire(depthKey(projectId), DEPTH_WINDOW_SECONDS);
 
     recordGauge("langfuse.queue_backpressure.depth", depth, {
       projectId,
@@ -67,7 +77,18 @@ export async function isProjectPaused(projectId: string): Promise<boolean> {
 export async function listPausedProjects(): Promise<string[]> {
   if (!redis) return [];
 
-  const keys = await redis.keys(`${BACKPRESSURE_PREFIX}:paused:*`);
+  // Use an incremental SCAN instead of KEYS so the shared Redis event loop is
+  // never blocked by a full-keyspace scan.
+  const stream = redis.scanStream({
+    match: `${BACKPRESSURE_PREFIX}:paused:*`,
+    count: 100,
+  });
+
+  const keys: string[] = [];
+  for await (const batch of stream) {
+    keys.push(...batch);
+  }
+
   return keys.map((key) => key.split(":").pop() as string);
 }
 
